@@ -123,6 +123,43 @@ AUGMENTATION_DATA: list[tuple[str, int]] = [
     ("Your computer has been hacked. Call PHONETOKEN for immediate assistance.", 1),
     ("CBI Officer calling. Your Aadhaar is linked to illegal activity. Call PHONETOKEN", 1),
 
+    # ── Social engineering — urgency + fear tactics ───────────────────────────
+    # Key signal: manufactured time pressure combined with personal threat
+    ("FINAL WARNING: Your mobile number will be blocked in 2 hours. Verify at URLTOKEN", 1),
+    ("Your WhatsApp account has been compromised. Secure it immediately: URLTOKEN", 1),
+    ("ALERT: 3 failed login attempts on your Gmail. Verify identity now: URLTOKEN", 1),
+    ("Your Google account will be disabled. Confirm ownership at URLTOKEN within 24h.", 1),
+    ("Action required: Your Facebook account violated community standards. Appeal: URLTOKEN", 1),
+    ("Netflix: Your subscription was charged AMOUNTTOKEN. If not you, cancel at URLTOKEN", 1),
+    ("URGENT: Someone is using your Netflix. Change password now at URLTOKEN", 1),
+    ("Your Apple ID has been locked. Unlock at URLTOKEN or lose all your data.", 1),
+
+    # ── Suspicious link patterns ───────────────────────────────────────────────
+    # Key signal: short-lived or lookalike domains combined with urgency
+    ("Verify your identity to avoid account suspension: URLTOKEN — expires in 1 hour.", 1),
+    ("Claim your cashback before it expires. Tap here: URLTOKEN", 1),
+    ("Your parcel is waiting. Pay AMOUNTTOKEN delivery fee at URLTOKEN to release it.", 1),
+    ("You have a pending bank transfer. Confirm at URLTOKEN before midnight.", 1),
+    ("Your job application requires document upload. Submit at URLTOKEN today.", 1),
+    ("Free Jio data AMOUNTTOKEN GB available for you. Claim at URLTOKEN", 1),
+    ("Exclusive offer: get free recharge by completing a survey: URLTOKEN", 1),
+
+    # ── Credential / account takeover phishing ────────────────────────────────
+    # Key signal: asking user to enter login credentials via a link
+    ("Your online banking session has expired. Re-login to continue: URLTOKEN", 1),
+    ("Your UPI ID has been deactivated. Re-register at URLTOKEN to restore payments.", 1),
+    ("Paytm: Unusual login detected. Verify your PIN at URLTOKEN to secure wallet.", 1),
+    ("Google Pay alert: Your account needs re-verification. Visit URLTOKEN", 1),
+    ("PhonePe: Complete KYC verification to avoid payment limits. Link: URLTOKEN", 1),
+    ("BHIM: Your registered mobile has changed. If not you, update at URLTOKEN now.", 1),
+
+    # ── Fake job / recruitment scams ──────────────────────────────────────────
+    # Key signal: unsolicited job offer requiring upfront payment or personal data
+    ("Work from home and earn AMOUNTTOKEN daily. No experience needed. Join: URLTOKEN", 1),
+    ("You have been selected for a data entry job. Pay AMOUNTTOKEN registration fee.", 1),
+    ("HR team: Your resume was shortlisted. Pay AMOUNTTOKEN processing fee to proceed.", 1),
+    ("Earn AMOUNTTOKEN per hour from home! Simple typing task. Enroll: URLTOKEN", 1),
+
     # ── Safe / normal messages ────────────────────────────────────────────────
     ("Hey are you free for lunch tomorrow?", 0),
     ("The meeting is rescheduled to 3pm. Please update your calendar.", 0),
@@ -136,6 +173,14 @@ AUGMENTATION_DATA: list[tuple[str, int]] = [
     ("Class cancelled today. See you on Thursday.", 0),
     ("Can you pick up milk on the way home?", 0),
     ("Your subscription has been renewed for AMOUNTTOKEN. Thank you.", 0),
+    ("Netflix: Your next billing date is on the 15th. Manage at netflix.com/account.", 0),
+    ("Google: A new sign-in to your account from Chrome on Windows. Was this you?", 0),
+    ("Apple: Your iCloud storage is almost full. Manage storage in Settings.", 0),
+    ("Paytm: Payment of AMOUNTTOKEN to merchant successful. Ref: OTPTOKEN.", 0),
+    ("Your Jio number PHONETOKEN data balance is AMOUNTTOKEN GB valid till 30 days.", 0),
+    ("HDFC: Your credit card statement for this month is ready. View in NetBanking.", 0),
+    ("Interview scheduled for Monday 10 AM. Please confirm your attendance.", 0),
+    ("Hi, I saw your profile on LinkedIn. Would love to connect and discuss.", 0),
 ]
 
 

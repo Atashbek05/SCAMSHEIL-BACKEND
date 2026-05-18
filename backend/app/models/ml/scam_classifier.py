@@ -157,6 +157,61 @@ class ScamClassifier:
 
         return {"label": label, "confidence": confidence}
 
+    def predict_preprocessed(self, cleaned_text: str) -> dict:
+        """
+        Classify an already-preprocessed string without running preprocess() again.
+
+        Use this when the caller has already called preprocess() and needs to
+        keep the preprocessed text (e.g. to return it as `analyzed_text` in the
+        API response). Avoids redundant tokenisation and cleaning.
+
+        Returns the same dict shape as predict():
+          label      — "scam" or "safe"
+          confidence — P(scam) as a percentage (0–100)
+        """
+        if self._pipeline is None:
+            raise RuntimeError("Model is not trained or loaded. Call train() or from_disk() first.")
+
+        proba = self._pipeline.predict_proba([cleaned_text])[0]
+        scam_prob = float(proba[1])
+
+        return {
+            "label": "scam" if scam_prob >= self._threshold else "safe",
+            "confidence": round(scam_prob * 100, 2),
+        }
+
+    def predict_batch(self, raw_texts: list[str]) -> list[dict]:
+        """
+        Classify a list of raw messages in a single pipeline call.
+
+        More efficient than calling predict() in a loop because TF-IDF
+        vectorisation and matrix multiplication are applied once across the
+        entire batch rather than per-message.
+
+        Parameters
+        ----------
+        raw_texts : list of raw (un-preprocessed) strings
+
+        Returns
+        -------
+        List of dicts, each with keys:
+          label      — "scam" or "safe"
+          confidence — P(scam) as a percentage (0–100)
+        """
+        if self._pipeline is None:
+            raise RuntimeError("Model is not trained or loaded. Call train() or from_disk() first.")
+
+        cleaned = [preprocess(t) for t in raw_texts]
+        probas = self._pipeline.predict_proba(cleaned)[:, 1]  # P(scam) for each message
+
+        return [
+            {
+                "label": "scam" if float(p) >= self._threshold else "safe",
+                "confidence": round(float(p) * 100, 2),
+            }
+            for p in probas
+        ]
+
     # ------------------------------------------------------------------
     # Persistence
     # ------------------------------------------------------------------

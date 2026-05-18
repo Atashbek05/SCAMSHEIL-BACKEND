@@ -1,0 +1,40 @@
+# render.yaml — Render service configuration for ScamShield
+#
+# Deploy steps:
+#   1. Push this repo to GitHub.
+#   2. Create a new "Web Service" in Render and connect the repo.
+#   3. Render will detect this file and pre-fill all settings.
+#   4. Add SECRET_KEY in the Render dashboard → Environment tab.
+#   5. After the first deploy, open a Render shell and train the model:
+#        python scripts/train_model.py
+#      The trained .joblib is stored in the ephemeral filesystem.
+#      For persistence across deploys, mount a Render Disk at /opt/render/project/src/backend/app/models/ml/
+#
+# Health-check URL: https://<your-service>.onrender.com/api/v1/health
+
+services:
+  - type: web
+    name: scamshield-backend
+    runtime: python
+    rootDir: backend          # all commands run inside backend/
+    buildCommand: pip install -r requirements.txt && python scripts/train_model.py
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/v1/health
+
+    envVars:
+      - key: DEBUG
+        value: "false"          # disable Swagger UI in production
+      - key: HOST
+        value: "0.0.0.0"
+      - key: MODEL_CONFIDENCE_THRESHOLD
+        value: "0.75"
+      - key: SECRET_KEY
+        generateValue: true     # Render generates a random secret at deploy time
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+
+    # Uncomment and configure if you add a PostgreSQL database later:
+    # - key: DATABASE_URL
+    #   fromDatabase:
+    #     name: scamshield-db
+    #     property: connectionString

@@ -1,15 +1,18 @@
 """
 services/detection_service.py — Scam detection business logic.
 
-This is the single integration point between the FastAPI routes and the
-ML classifier. Routes call analyse() or analyze(); everything below stays private.
+Single integration point between the FastAPI routes and the ML classifier.
 
-Pipeline:
-  DetectionRequest.text / AnalyzeRequest.message
-    → _preprocess()          (scam_preprocessor.preprocess)
-    → _run_model()           (ScamClassifier.predict)
-    → _postprocess()         (map raw dict → response schema)
-    → DetectionResult / AnalyzeResponse
+Pipeline (POST /api/v1/analyze):
+  raw message
+    → preprocess()             token replacement + cleaning (once)
+    → predict_preprocessed()   TF-IDF → LogisticRegression → P(scam)
+    → _find_keywords()         curated keyword scan on the raw message
+    → AnalyzeResponse          label, risk%, scam_probability, keywords, analyzed_text
+
+The model is loaded once at import time and reused across all requests.
+If the .joblib file is absent the service degrades gracefully (label="unknown")
+so the API stays up while the model is being trained.
 """
 
 from __future__ import annotations
@@ -19,127 +22,126 @@ from typing import List
 
 from loguru import logger
 
+from app.core.config import settings
 from app.models.ml.scam_classifier import ScamClassifier, MODEL_PATH
 from app.models.schemas.detection import DetectionRequest, DetectionResult, ScamType
 from app.utils.scam_preprocessor import preprocess
 
 
 # ---------------------------------------------------------------------------
-# Scam keyword vocabulary — checked against raw (un-preprocessed) message text.
-# Ordered roughly by signal strength; all lowercase for case-insensitive matching.
+# Scam keyword vocabulary
+#
+# Scanned against the raw (un-preprocessed) message text so keywords survive
+# even if tokenisation collapses them.  Ordered longest-first so multi-word
+# phrases ("share otp") match before their sub-phrases ("otp").
 # ---------------------------------------------------------------------------
 
 _SCAM_KEYWORDS: List[str] = [
     # OTP / credential theft
-    "otp",
     "one time password",
+    "authentication code",
+    "verification code",
     "share otp",
     "send otp",
     "enter otp",
     "verify otp",
     "share code",
     "send code",
-    "authentication code",
-    "verification code",
+    "personal details",
+    "otp",
     "cvv",
     "pin",
     # Urgency / pressure tactics
-    "urgent",
-    "immediately",
-    "expire",
     "expires soon",
     "last chance",
     "final notice",
-    "act now",
     "limited time",
+    "act now",
+    "urgent",
+    "immediately",
     "deadline",
+    "expire",
     "suspended",
     "blocked",
     "restricted",
     "deactivated",
     # Account / banking scams
-    "kyc",
-    "kyc update",
     "account suspended",
     "account blocked",
-    "verify account",
     "verify your account",
+    "verify account",
+    "kyc update",
+    "unauthorized transaction",
+    "transaction failed",
     "net banking",
     "online banking",
-    "transaction failed",
-    "unauthorized transaction",
+    "kyc",
     # Prize / lottery
-    "won",
-    "winner",
+    "lucky winner",
+    "lucky draw",
+    "claim your",
+    "claim now",
+    "free money",
+    "free gift",
+    "congratulations",
     "lottery",
+    "winner",
     "prize",
     "reward",
-    "congratulations",
-    "lucky draw",
-    "lucky winner",
-    "claim now",
-    "claim your",
-    "free gift",
-    "free money",
+    "won",
     # Government impersonation
+    "government notice",
     "income tax",
     "it department",
-    "epfo",
-    "uidai",
-    "aadhar",
-    "pan card",
     "tds refund",
     "gst refund",
-    "government notice",
+    "pan card",
+    "aadhar",
+    "uidai",
+    "epfo",
     # Link / download pressure
-    "click here",
-    "click link",
-    "click below",
     "download now",
     "install app",
     "update app",
+    "click here",
+    "click link",
+    "click below",
     "verify now",
     "confirm now",
     "activate now",
     # Personal information requests
-    "share your",
-    "send your",
     "provide your",
     "submit your",
-    "password",
+    "share your",
+    "send your",
     "credentials",
-    "personal details",
+    "password",
     # Investment / crypto scams
-    "invest now",
     "guaranteed profit",
     "guaranteed return",
     "double your money",
-    "crypto",
-    "bitcoin",
     "trading platform",
+    "invest now",
+    "bitcoin",
+    "crypto",
     # Refund scams
-    "refund",
-    "cashback",
     "money back",
     "compensation",
+    "cashback",
+    "refund",
 ]
-
-# Pre-compiled pattern for fast word-boundary matching across all keywords.
-# Longer phrases are checked first via sorted order (longest first wins).
-_SORTED_KEYWORDS = sorted(_SCAM_KEYWORDS, key=len, reverse=True)
 
 
 def _find_keywords(text: str) -> List[str]:
     """
-    Return which entries from _SCAM_KEYWORDS appear in *text* (case-insensitive).
+    Return entries from _SCAM_KEYWORDS that appear in *text* (case-insensitive).
 
-    Matches on word boundaries so "pin" won't fire inside "opinion".
-    Each keyword is reported at most once even if repeated in the text.
+    Uses word-boundary anchors so short keywords like "pin" don't fire inside
+    words like "opinion".  Each keyword is reported at most once.
     """
     t = text.lower()
     found: List[str] = []
-    for kw in _SORTED_KEYWORDS:
-        # Use word-boundary anchors; wrap multi-word phrases in \\b only at edges
+    for kw in _SCAM_KEYWORDS:  # already sorted longest-first in the list above
         pattern = r"(?<!\w)" + re.escape(kw) + r"(?!\w)"
         if re.search(pattern, t):
             found.append(kw)
@@ -150,107 +152,113 @@ class DetectionService:
     """
     Orchestrates the full scam-detection pipeline.
 
-    The classifier is loaded once on __init__ and reused across all requests.
-    If the model file is absent (not yet trained), the service degrades
-    gracefully and returns an explicit "model unavailable" response rather
-    than crashing the entire API.
+    Loaded once at module import; reused for every request.
+    Degrades gracefully when the model file is missing.
     """
 
     def __init__(self) -> None:
         self._model: ScamClassifier | None = None
         self._load_model()
 
+    # ------------------------------------------------------------------
+    # Startup
+    # ------------------------------------------------------------------
+
     def _load_model(self) -> None:
-        """Try to load the trained classifier from disk at startup."""
+        """Load the trained classifier from disk, using the configured threshold."""
         try:
-            self._model = ScamClassifier.from_disk(MODEL_PATH)
-            logger.info(f"ScamClassifier loaded from {MODEL_PATH}")
+            self._model = ScamClassifier.from_disk(
+                MODEL_PATH,
+                # Threshold from config (default 0.75): probability above which
+                # the message is labelled "scam".  Higher = fewer false positives.
+                threshold=settings.MODEL_CONFIDENCE_THRESHOLD,
+            )
+            logger.info(
+                "ScamClassifier loaded from {} (threshold={:.2f})",
+                MODEL_PATH,
+                settings.MODEL_CONFIDENCE_THRESHOLD,
+            )
         except FileNotFoundError:
             logger.warning(
-                "No trained model found at {path}. "
+                "No trained model found at {}. "
                 "Run `python scripts/train_model.py` to train one. "
-                "API will return placeholder results until then.",
-                path=MODEL_PATH,
+                "API will return label='unknown' until then.",
+                MODEL_PATH,
             )
             self._model = None
 
     # ------------------------------------------------------------------
-    # Public API — /analyze endpoint (Android-facing)
+    # Public API — POST /api/v1/analyze  (Android-facing)
     # ------------------------------------------------------------------
 
     def analyze(self, message: str) -> "AnalyzeResponse":  # type: ignore[name-defined]
         """
-        Classify *message* and return scam_probability, label, suspicious_keywords.
+        Full pipeline for a single raw message.
 
-        This is the method called by the POST /analyze route handler.
-        Import is deferred to avoid a top-level circular import.
+        1. Extract suspicious keywords from the raw text (before tokenisation
+           so human-readable phrases are preserved).
+        2. Preprocess the message once — result is stored as `analyzed_text`
+           and passed directly to the model (avoids double-preprocessing).
+        3. Run the TF-IDF → LogisticRegression pipeline.
+        4. Build and return the AnalyzeResponse.
         """
         from app.models.schemas.analyze import AnalyzeResponse
 
         keywords = _find_keywords(message)
 
+        # Preprocess once — the tokenised string is both the model input and
+        # the `analyzed_text` field returned to the caller for transparency.
+        analyzed_text = preprocess(message)
+
         if self._model is None:
-            # Model not trained yet — return a safe-looking placeholder with no keywords
             return AnalyzeResponse(
-                scam_probability=0.0,
                 label="unknown",
+                risk=0.0,
+                scam_probability=0.0,
                 suspicious_keywords=[],
+                analyzed_text=analyzed_text,
             )
 
-        cleaned = self._preprocess(message)
-        raw = self._run_model(cleaned)
+        # predict_preprocessed() skips the internal preprocess() call so the
+        # text is not cleaned a second time.
+        raw = self._model.predict_preprocessed(analyzed_text)
 
-        scam_probability = raw["confidence"] / 100.0  # convert % → [0, 1]
-        label = raw["label"]
+        risk = raw["confidence"]            # percentage, e.g. 94.27
+        scam_probability = risk / 100.0    # [0, 1] for analytics consumers
 
         return AnalyzeResponse(
+            label=raw["label"],
+            risk=risk,
             scam_probability=scam_probability,
-            label=label,
             suspicious_keywords=keywords,
+            analyzed_text=analyzed_text,
         )
 
     # ------------------------------------------------------------------
-    # Public API — legacy /analyse endpoint (existing schema)
+    # Public API — legacy /analyse endpoint (DetectionRequest schema)
     # ------------------------------------------------------------------
 
     def analyse(self, request: DetectionRequest) -> DetectionResult:
         """
-        Classify a single message and return a structured detection result.
-        Called directly by the route handler.
+        Classify a single message and return a DetectionResult.
+        Uses the same preprocessing-once pattern as analyze() to avoid
+        running the tokeniser twice.
         """
         if self._model is None:
             return self._model_unavailable_response()
 
-        cleaned = self._preprocess(request.text)
-        raw = self._run_model(cleaned)
+        analyzed_text = preprocess(request.text)
+        raw = self._model.predict_preprocessed(analyzed_text)
         return self._postprocess(raw, request.text)
 
     # ------------------------------------------------------------------
-    # Private pipeline steps
+    # Private helpers
     # ------------------------------------------------------------------
 
-    def _preprocess(self, text: str) -> str:
-        """
-        Apply scam-aware preprocessing: token replacement + cleaning.
-        Mirrors exactly what was done to training data so the feature space matches.
-        """
-        return preprocess(text)
-
-    def _run_model(self, cleaned_text: str) -> dict:
-        """
-        Call the classifier. Returns {"label": "scam"|"safe", "confidence": float}.
-        The classifier already expects pre-processed text.
-        """
-        return self._model.predict(cleaned_text)  # type: ignore[union-attr]
-
     def _postprocess(self, raw: dict, original_text: str) -> DetectionResult:
-        """
-        Map the classifier's raw output to the Pydantic response schema.
-        Scam type is inferred from keyword heuristics on the original text
-        until a multi-class model is implemented.
-        """
+        """Map the classifier's raw dict to the DetectionResult Pydantic schema."""
         is_scam = raw["label"] == "scam"
-        confidence = raw["confidence"] / 100.0  # convert % → [0, 1] for schema
+        confidence = raw["confidence"] / 100.0  # convert % → [0, 1]
 
         scam_type = (
             self._infer_scam_type(original_text) if is_scam else ScamType.UNKNOWN
@@ -264,16 +272,13 @@ class DetectionService:
 
     def _infer_scam_type(self, text: str) -> ScamType:
         """
-        Lightweight keyword heuristic to label the *kind* of scam.
+        Lightweight keyword heuristic to categorise the kind of scam.
         Replaced by a multi-class model in a future sprint.
         """
         t = text.lower()
 
-        if any(k in t for k in ("otp", "pin", "share code", "send code")):
-            return ScamType.PHISHING  # OTP-theft treated as credential phishing
-
-        if any(k in t for k in ("sms", "text", "message", "mobile")):
-            return ScamType.SMISHING
+        if any(k in t for k in ("otp", "pin", "share code", "send code", "cvv")):
+            return ScamType.PHISHING
 
         if any(k in t for k in ("call", "phone", "speak", "press 1", "agent")):
             return ScamType.VISHING
@@ -287,11 +292,10 @@ class DetectionService:
         if any(k in t for k in ("invest", "profit", "return", "trading", "crypto")):
             return ScamType.INVESTMENT
 
-        return ScamType.PHISHING  # default — most scam messages are credential phishing
+        if any(k in t for k in ("sms", "text", "mobile")):
+            return ScamType.SMISHING
 
-    # ------------------------------------------------------------------
-    # Fallback when model is not trained yet
-    # ------------------------------------------------------------------
+        return ScamType.PHISHING  # credential phishing is the most common catch-all
 
     def _model_unavailable_response(self) -> DetectionResult:
         return DetectionResult(
