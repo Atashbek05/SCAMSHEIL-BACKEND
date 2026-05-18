@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(Get-ChildItem \"d:\\\\SCAMSHEILD\\\\backend\" -Recurse | Where-Object { -not $_.PSIsContainer } | Select-Object -ExpandProperty FullName | ForEach-Object { $_.Replace\\(\"d:\\\\SCAMSHEILD\\\\backend\\\\\", \"\"\\) })",
+      "PowerShell(python --version)",
+      "PowerShell(pip --version)",
+      "PowerShell(pip show pydantic pydantic-settings aiosqlite python-dotenv loguru pytest pytest-asyncio 2>$null)",
+      "PowerShell(python -m venv \"d:\\\\SCAMSHEILD\\\\backend\\\\.venv\")",
+      "PowerShell(& \"d:\\\\SCAMSHEILD\\\\backend\\\\.venv\\\\Scripts\\\\python.exe\" -m pip install --upgrade pip --quiet)",
+      "PowerShell(& \"d:\\\\SCAMSHEILD\\\\backend\\\\.venv\\\\Scripts\\\\pip.exe\" install -r \"d:\\\\SCAMSHEILD\\\\backend\\\\requirements.txt\" 2>&1)",
+      "Bash(Get-ChildItem -Path \"d:\\\\SCAMSHEILD\" -Recurse -Force)",
+      "Bash(Select-Object FullName, PSIsContainer)",
+      "Bash(Sort-Object FullName)",
+      "Bash(Format-Table -AutoSize)",
+      "Bash(.venvScriptspython.exe -c ' *)"
+    ]
+  }
+}

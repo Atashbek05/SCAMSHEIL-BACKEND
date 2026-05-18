@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtualenvs
+.venv/
+venv/
+env/
+
+# Environment
+.env
+
+# Database
+*.db
+*.sqlite3
+
+# Model artefacts (large binary files — store in DVC or cloud storage)
+app/models/ml/*.pkl
+app/models/ml/*.joblib
+app/models/ml/*.onnx
+app/models/ml/*.pt
+app/models/ml/*.h5
+
+# Datasets (large files — use DVC or download scripts)
+datasets/raw/*
+datasets/processed/*
+!datasets/raw/.gitkeep
+!datasets/processed/.gitkeep
+
+# Logs
+logs/*.log
+logs/*.zip
+
+# IDE
+.vscode/
+.idea/
+*.swp
