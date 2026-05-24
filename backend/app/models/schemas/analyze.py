@@ -91,6 +91,13 @@ class AnalyzeResponse(BaseModel):
             "monetary amounts with AMOUNTTOKEN. Useful for debugging and transparency."
         ),
     )
+    source: str = Field(
+        default="local_ml",
+        description=(
+            'Which backend produced the result: "chatgpt" (OpenAI GPT-4o-mini) '
+            'or "local_ml" (TF-IDF + Logistic Regression fallback).'
+        ),
+    )
 
     model_config = {
         "json_schema_extra": {
@@ -104,6 +111,7 @@ class AnalyzeResponse(BaseModel):
                         "urgent your sbi account is suspended "
                         "share otptoken with our agent to restore access"
                     ),
+                    "source": "chatgpt",
                 }
             ]
         }

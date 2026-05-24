@@ -12,6 +12,9 @@ sqlalchemy==2.0.36
 aiosqlite==0.20.0
 alembic==1.14.0                # schema migrations
 
+# ── OpenAI ────────────────────────────────────────────────────────────────────
+openai>=1.0.0
+
 # ── AI / ML ───────────────────────────────────────────────────────────────────
 scikit-learn==1.6.1            # TfidfVectorizer + LogisticRegression pipeline
 numpy==2.2.3

@@ -26,6 +26,7 @@ from app.core.config import settings
 from app.models.ml.scam_classifier import ScamClassifier, MODEL_PATH
 from app.models.schemas.detection import DetectionRequest, DetectionResult, ScamType
 from app.utils.scam_preprocessor import preprocess
+from app.services import openai_analyzer
 
 
 # ---------------------------------------------------------------------------
@@ -195,20 +196,34 @@ class DetectionService:
         """
         Full pipeline for a single raw message.
 
-        1. Extract suspicious keywords from the raw text (before tokenisation
-           so human-readable phrases are preserved).
-        2. Preprocess the message once — result is stored as `analyzed_text`
-           and passed directly to the model (avoids double-preprocessing).
-        3. Run the TF-IDF → LogisticRegression pipeline.
-        4. Build and return the AnalyzeResponse.
+        1. Try ChatGPT (openai_analyzer) — use its result if available.
+        2. On any OpenAI failure, fall back to TF-IDF → LogisticRegression.
+        3. Keyword scan always runs against the raw message for transparency.
+        4. Response includes `source` field: "chatgpt" or "local_ml".
         """
         from app.models.schemas.analyze import AnalyzeResponse
 
         keywords = _find_keywords(message)
-
-        # Preprocess once — the tokenised string is both the model input and
-        # the `analyzed_text` field returned to the caller for transparency.
         analyzed_text = preprocess(message)
+
+        # --- Try ChatGPT first ---
+        gpt_result = openai_analyzer.analyze(message)
+        if gpt_result is not None:
+            probability = float(gpt_result["scam_probability"])
+            # Merge keywords: prefer ChatGPT's list, supplement with local scan
+            gpt_keywords = gpt_result.get("suspicious_keywords") or []
+            merged_keywords = gpt_keywords if gpt_keywords else keywords
+            return AnalyzeResponse(
+                label=gpt_result["label"],
+                risk=round(probability * 100, 2),
+                scam_probability=probability,
+                suspicious_keywords=merged_keywords,
+                analyzed_text=analyzed_text,
+                source="chatgpt",
+            )
+
+        # --- Fallback: local ML model ---
+        logger.info("ChatGPT unavailable — using local ML model")
 
         if self._model is None:
             return AnalyzeResponse(
@@ -217,14 +232,12 @@ class DetectionService:
                 scam_probability=0.0,
                 suspicious_keywords=[],
                 analyzed_text=analyzed_text,
+                source="local_ml",
             )
 
-        # predict_preprocessed() skips the internal preprocess() call so the
-        # text is not cleaned a second time.
         raw = self._model.predict_preprocessed(analyzed_text)
-
-        risk = raw["confidence"]            # percentage, e.g. 94.27
-        scam_probability = risk / 100.0    # [0, 1] for analytics consumers
+        risk = raw["confidence"]
+        scam_probability = risk / 100.0
 
         return AnalyzeResponse(
             label=raw["label"],
@@ -232,6 +245,7 @@ class DetectionService:
             scam_probability=scam_probability,
             suspicious_keywords=keywords,
             analyzed_text=analyzed_text,
+            source="local_ml",
         )
 
     # ------------------------------------------------------------------
