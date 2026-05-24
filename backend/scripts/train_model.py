@@ -18,6 +18,7 @@ What this script does:
 
 import sys
 import io
+import ssl
 import zipfile
 import urllib.request
 from pathlib import Path
@@ -188,36 +189,53 @@ AUGMENTATION_DATA: list[tuple[str, int]] = [
 # Dataset download
 # ---------------------------------------------------------------------------
 
-def download_sms_spam_dataset() -> None:
+def _fetch_url(url: str, timeout: int = 30) -> bytes:
+    """Try verified HTTPS first; fall back to unverified if cert is expired/invalid."""
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as r:
+            return r.read()
+    except ssl.SSLCertVerificationError:
+        logger.warning("SSL certificate verification failed — retrying without verification")
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        with urllib.request.urlopen(url, context=ctx, timeout=timeout) as r:
+            return r.read()
+
+
+def download_sms_spam_dataset() -> bool:
     """
     Download the SMS Spam Collection from UCI and save to datasets/raw/.
     Skips download if the file already exists.
+
+    Returns True on success, False on failure (caller continues with
+    augmentation-only data instead of aborting the build).
     """
     if SMS_SPAM_FILE.exists():
         logger.info(f"Dataset already cached at {SMS_SPAM_FILE}")
-        return
+        return True
 
     RAW_DIR.mkdir(parents=True, exist_ok=True)
     logger.info(f"Downloading SMS Spam Collection from {SMS_SPAM_URL} …")
 
     try:
-        with urllib.request.urlopen(SMS_SPAM_URL, timeout=30) as response:
-            zip_bytes = response.read()
+        zip_bytes = _fetch_url(SMS_SPAM_URL)
     except Exception as exc:
-        logger.error(f"Download failed: {exc}")
-        logger.error(
-            "Manual download instructions:\n"
+        logger.warning(
+            f"Download failed: {exc}\n"
+            "Training will continue on augmentation data only.\n"
+            "To include the full SMS Spam Collection later:\n"
             f"  1. Go to {SMS_SPAM_URL}\n"
-            f"  2. Extract the file named 'SMSSpamCollection'\n"
+            f"  2. Extract 'SMSSpamCollection'\n"
             f"  3. Place it at {SMS_SPAM_FILE}"
         )
-        sys.exit(1)
+        return False
 
     with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
-        # The archive contains 'SMSSpamCollection' (no extension)
         zf.extract("SMSSpamCollection", RAW_DIR)
 
     logger.success(f"Dataset saved to {SMS_SPAM_FILE}")
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -226,37 +244,39 @@ def download_sms_spam_dataset() -> None:
 
 def load_dataset() -> tuple[list[str], list[int]]:
     """
-    Load the SMS Spam Collection and merge augmentation data.
+    Load the SMS Spam Collection (if available) and merge augmentation data.
+    Falls back to augmentation-only if the UCI file is missing.
 
     Returns
     -------
     texts  : preprocessed message strings
     labels : 0 = safe, 1 = scam
     """
-    logger.info("Loading SMS Spam Collection …")
-    df = pd.read_csv(
-        SMS_SPAM_FILE,
-        sep="\t",
-        header=None,
-        names=["label", "message"],
-        encoding="utf-8",
-        on_bad_lines="skip",
-    )
+    base_texts: list[str] = []
+    base_labels: list[int] = []
 
-    # Map UCI labels to binary integers
-    df["label"] = df["label"].map({"ham": 0, "spam": 1})
-    df = df.dropna(subset=["label", "message"])
-    df["label"] = df["label"].astype(int)
+    if SMS_SPAM_FILE.exists():
+        logger.info("Loading SMS Spam Collection …")
+        df = pd.read_csv(
+            SMS_SPAM_FILE,
+            sep="\t",
+            header=None,
+            names=["label", "message"],
+            encoding="utf-8",
+            on_bad_lines="skip",
+        )
+        df["label"] = df["label"].map({"ham": 0, "spam": 1})
+        df = df.dropna(subset=["label", "message"])
+        df["label"] = df["label"].astype(int)
+        base_texts = df["message"].tolist()
+        base_labels = df["label"].tolist()
+        logger.info(
+            f"Base dataset: {len(base_texts):,} messages "
+            f"({sum(base_labels):,} scam / {len(base_labels) - sum(base_labels):,} safe)"
+        )
+    else:
+        logger.warning("SMS Spam Collection not found — using augmentation data only")
 
-    base_texts = df["message"].tolist()
-    base_labels = df["label"].tolist()
-
-    logger.info(
-        f"Base dataset: {len(base_texts):,} messages "
-        f"({sum(base_labels):,} scam / {len(base_labels) - sum(base_labels):,} safe)"
-    )
-
-    # Merge augmentation
     aug_texts  = [pair[0] for pair in AUGMENTATION_DATA]
     aug_labels = [pair[1] for pair in AUGMENTATION_DATA]
 
@@ -268,7 +288,6 @@ def load_dataset() -> tuple[list[str], list[int]]:
         f"({sum(all_labels):,} scam / {len(all_labels) - sum(all_labels):,} safe)"
     )
 
-    # Apply full scam-aware preprocessing to every message
     logger.info("Preprocessing messages …")
     processed = [preprocess(t) for t in all_texts]
 
@@ -321,7 +340,7 @@ def print_top_features(classifier: ScamClassifier, n: int = 20) -> None:
 # ---------------------------------------------------------------------------
 
 def train_and_save() -> None:
-    download_sms_spam_dataset()
+    download_sms_spam_dataset()  # failure is logged but non-fatal
 
     texts, labels = load_dataset()
 
