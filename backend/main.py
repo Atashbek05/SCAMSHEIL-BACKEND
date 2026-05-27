@@ -56,14 +56,16 @@ def create_app() -> FastAPI:
     # Register API routers (imported here to avoid circular imports)
     from app.api.v1 import router as api_v1_router
     from app.api.v1.routes.analyze import router as analyze_router
+    from app.api.v1.routes.chat import router as chat_router
     from app.api.v1.routes.health import router as health_router
 
     app.include_router(api_v1_router, prefix="/api/v1")
 
-    # Root-level aliases for Android clients that omit the /api/v1 prefix.
-    # The versioned paths (/api/v1/analyze, /api/v1/health) are preserved.
+    # Root-level aliases for Android clients that omit the /api prefix.
+    # The versioned paths (/api/v1/...) are preserved alongside these.
     app.include_router(analyze_router, tags=["Detection"])
     app.include_router(health_router, tags=["System"])
+    app.include_router(chat_router, prefix="/v1", tags=["AI Chat"])
 
     return app
 

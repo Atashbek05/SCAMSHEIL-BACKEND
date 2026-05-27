@@ -24,9 +24,11 @@ class ChatResponse(BaseModel):
 
 
 _SYSTEM_PROMPT = (
-    "You are a scam detection assistant. Help users determine if a person, message, "
-    "or situation is a scam. If the user sends a photo, analyze it for signs of fraud: "
-    "fake documents, suspicious profiles, fraudulent offers. Answer clearly and concisely."
+    "You are a scam detection assistant. "
+    "Help users determine if a person, message, screenshot or situation is a scam. "
+    "If the user sends a photo — analyze it for signs of fraud: fake documents, "
+    "suspicious profiles, fraudulent transfer screenshots, fake invoices. "
+    "Answer clearly and concisely. If unsure, say so."
 )
 
 
@@ -59,7 +61,7 @@ async def chat(request: ChatRequest) -> ChatResponse:
         response = client.chat.completions.create(
             model="gpt-4o",
             messages=messages,
-            max_tokens=500,
+            max_tokens=600,
         )
     except Exception:
         raise HTTPException(
