@@ -15,6 +15,9 @@ alembic==1.14.0                # schema migrations
 # ── OpenAI ────────────────────────────────────────────────────────────────────
 openai>=1.0.0
 
+# ── Claude API ───────────────────────────────────────────────────────────────
+anthropic>=0.40.0              # Claude API SDK (dataset generation, AI features)
+
 # ── AI / ML ───────────────────────────────────────────────────────────────────
 scikit-learn==1.6.1            # TfidfVectorizer + LogisticRegression pipeline
 numpy==2.2.3
